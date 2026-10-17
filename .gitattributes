@@ -1,0 +1,5 @@
+# Store and check out text files with LF so Prettier and Git agree on every OS.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
