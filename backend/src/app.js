@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import { describeError } from './logger.js';
@@ -23,6 +24,16 @@ export function createApp({ config, db, logger, staticDir = defaultStaticDir }) 
   app.disable('x-powered-by');
 
   app.use(helmet());
+  // Per-client-IP limit on every route (API, static files and the index.html fallback).
+  app.use(
+    rateLimit({
+      windowMs: 60_000,
+      limit: config.rateLimitPerMinute ?? 300,
+      standardHeaders: 'draft-8',
+      legacyHeaders: false,
+      message: { error: 'Too many requests' },
+    }),
+  );
   app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json());
   app.use(pinoHttp({ logger }));

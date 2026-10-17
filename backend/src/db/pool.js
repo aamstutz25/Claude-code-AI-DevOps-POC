@@ -1,6 +1,9 @@
-import { createHash } from 'node:crypto';
+import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import sql from 'mssql';
 import { describeError } from '../logger.js';
+
+const scrypt = promisify(scryptCallback);
 
 /** SQL Server error 18456 ("Login failed for user") and the driver's matching code. */
 export function isLoginFailure(err) {
@@ -16,9 +19,18 @@ export class LoginCooldownError extends Error {
   }
 }
 
-/** Identifies a set of credentials without keeping another copy of the password. */
-function fingerprint({ user, password }) {
-  return createHash('sha256').update(`${user}\0${password}`).digest('hex');
+/**
+ * Identifies a set of credentials without keeping another copy of the password. Uses
+ * scrypt (a password-hashing function) with a random salt that exists only in this
+ * process, so the fingerprint is useless outside it. It runs only when a pool opens.
+ */
+function createFingerprinter() {
+  const salt = randomBytes(16);
+  return ({ user, password }) => scrypt(`${user}\0${password}`, salt, 32);
+}
+
+function sameFingerprint(a, b) {
+  return Boolean(a && b) && timingSafeEqual(a, b);
 }
 
 /**
@@ -38,6 +50,7 @@ export function createDatabase({
   now = Date.now,
 }) {
   const loginCooldownMs = (dbConfig.loginCooldownSeconds ?? 300) * 1000;
+  const fingerprint = createFingerprinter();
   let poolPromise = null;
   let poolCredentialsId = null; // fingerprint of the credentials the open pool uses
   let failedLogin = null; // { fingerprint, until }
@@ -52,8 +65,8 @@ export function createDatabase({
 
   async function openPool() {
     const credentials = await credentialProvider.getCredentials();
-    const credentialsId = fingerprint(credentials);
-    if (failedLogin?.fingerprint === credentialsId && now() < failedLogin.until) {
+    const credentialsId = await fingerprint(credentials);
+    if (sameFingerprint(failedLogin?.fingerprint, credentialsId) && now() < failedLogin.until) {
       throw new LoginCooldownError();
     }
 

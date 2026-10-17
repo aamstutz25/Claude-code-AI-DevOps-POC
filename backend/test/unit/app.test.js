@@ -86,6 +86,21 @@ describe('cross-cutting behaviour', () => {
     expect(res.headers['x-powered-by']).toBeUndefined();
   });
 
+  it('rate-limits each client and answers 429 with JSON', async () => {
+    const limited = createApp({
+      config: { ...config, rateLimitPerMinute: 2 },
+      db: fakeDb(() => ({ recordset: [{ ok: 1 }] })),
+      logger,
+      staticDir: missingStaticDir,
+    });
+    expect((await request(limited).get('/api/health')).status).toBe(200);
+    expect((await request(limited).get('/api/health')).status).toBe(200);
+    const blocked = await request(limited).get('/api/health');
+    expect(blocked.status).toBe(429);
+    expect(blocked.body).toEqual({ error: 'Too many requests' });
+    expect(blocked.headers['retry-after']).toBeDefined();
+  });
+
   it('allows the configured frontend origin only', async () => {
     const res = await request(app).get('/api/health').set('Origin', 'http://localhost:5173');
     expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');

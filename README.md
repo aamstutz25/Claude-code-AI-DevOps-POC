@@ -74,7 +74,9 @@ Open http://localhost:5173: it shows **Hello, World!** and "Database connected".
 | `GET /api/greeting` | `200 { "message": "Hello, World!" }`                                                 |
 | `GET /api/health`   | `200 { "status": "ok", "db": "up" }` or `503 { "status": "degraded", "db": "down" }` |
 
-Errors return `{ "error": "..." }` with no internal details.
+Errors return `{ "error": "..." }` with no internal details. Every route is rate-limited per
+client IP (`RATE_LIMIT_PER_MINUTE`); over the limit the response is
+`429 { "error": "Too many requests" }`.
 
 ## Configuration
 
@@ -87,6 +89,7 @@ a pipeline can supply them directly. See `.env.example` for the full list.
 | `PORT`                            | `3000`                  | API port                           |
 | `CORS_ORIGIN`                     | `http://localhost:5173` | The only browser origin allowed    |
 | `LOG_LEVEL`                       | `info`                  | pino log level                     |
+| `RATE_LIMIT_PER_MINUTE`           | `300`                   | Per client IP; excess gets `429`   |
 | `DB_SERVER` / `DB_PORT`           | `localhost` / `1433`    |                                    |
 | `DB_NAME`                         | `HelloPoc`              |                                    |
 | `DB_ENCRYPT`                      | `true`                  | Encrypts the SQL Server connection |

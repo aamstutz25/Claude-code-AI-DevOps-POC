@@ -24,6 +24,14 @@ function parsePort(value, name) {
   return port;
 }
 
+function parsePositiveInteger(value, name) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1) {
+    throw new Error(`${name} must be a whole number of 1 or more`);
+  }
+  return number;
+}
+
 function parseNonNegativeInteger(value, name) {
   const number = Number(value);
   if (!Number.isInteger(number) || number < 0) {
@@ -50,6 +58,11 @@ export function getConfig(env = process.env) {
     port: parsePort(env.PORT ?? '3000', 'PORT'),
     corsOrigin: env.CORS_ORIGIN ?? 'http://localhost:5173',
     logLevel: env.LOG_LEVEL ?? 'info',
+    // Requests per minute allowed from one client IP, across the API and the web app.
+    rateLimitPerMinute: parsePositiveInteger(
+      env.RATE_LIMIT_PER_MINUTE ?? '300',
+      'RATE_LIMIT_PER_MINUTE',
+    ),
     envFile: env.ENV_FILE ?? defaultEnvFile,
     db: {
       server: env.DB_SERVER ?? 'localhost',

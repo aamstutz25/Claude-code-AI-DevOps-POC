@@ -6,6 +6,7 @@ describe('getConfig', () => {
     const config = getConfig({});
     expect(config.port).toBe(3000);
     expect(config.corsOrigin).toBe('http://localhost:5173');
+    expect(config.rateLimitPerMinute).toBe(300);
     expect(config.db).toEqual({
       server: 'localhost',
       port: 1433,
@@ -45,6 +46,7 @@ describe('getConfig', () => {
     [{ PORT: 'abc' }, 'PORT must be a port number'],
     [{ DB_PORT: '70000' }, 'DB_PORT must be a port number'],
     [{ DB_LOGIN_COOLDOWN_SECONDS: '-1' }, 'DB_LOGIN_COOLDOWN_SECONDS must be a whole number'],
+    [{ RATE_LIMIT_PER_MINUTE: '0' }, 'RATE_LIMIT_PER_MINUTE must be a whole number of 1 or more'],
     [
       { DB_TRUST_SERVER_CERTIFICATE: 'yes' },
       'DB_TRUST_SERVER_CERTIFICATE must be "true" or "false"',
