@@ -1,0 +1,60 @@
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+export const defaultEnvFile = resolve(repoRoot, '.env');
+
+/**
+ * Loads settings from the .env file into process.env, if the file exists.
+ * Variables already set in the environment (for example by a pipeline) take precedence.
+ */
+export function loadEnvFile(envFile = process.env.ENV_FILE ?? defaultEnvFile) {
+  if (existsSync(envFile)) {
+    process.loadEnvFile(envFile);
+  }
+  return envFile;
+}
+
+function parsePort(value, name) {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${name} must be a port number between 1 and 65535`);
+  }
+  return port;
+}
+
+function parseBoolean(value, defaultValue, name) {
+  if (value === undefined || value === '') return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  throw new Error(`${name} must be "true" or "false"`);
+}
+
+/**
+ * Builds the application settings from environment variables.
+ * Credentials are deliberately not part of this object: they are read on demand by the
+ * credential provider so they can change (be rotated) while the app is running.
+ */
+export function getConfig(env = process.env) {
+  return {
+    port: parsePort(env.PORT ?? '3000', 'PORT'),
+    corsOrigin: env.CORS_ORIGIN ?? 'http://localhost:5173',
+    logLevel: env.LOG_LEVEL ?? 'info',
+    envFile: env.ENV_FILE ?? defaultEnvFile,
+    db: {
+      server: env.DB_SERVER ?? 'localhost',
+      port: parsePort(env.DB_PORT ?? '1433', 'DB_PORT'),
+      database: env.DB_NAME ?? 'HelloPoc',
+      encrypt: parseBoolean(env.DB_ENCRYPT, true, 'DB_ENCRYPT'),
+      // Secure default. Only local Phase 1 development sets this to true (see .env.example).
+      trustServerCertificate: parseBoolean(
+        env.DB_TRUST_SERVER_CERTIFICATE,
+        false,
+        'DB_TRUST_SERVER_CERTIFICATE',
+      ),
+      credentialProvider: env.DB_CREDENTIAL_PROVIDER ?? 'env',
+    },
+  };
+}
