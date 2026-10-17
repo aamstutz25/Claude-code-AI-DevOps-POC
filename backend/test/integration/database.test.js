@@ -22,14 +22,15 @@ afterAll(() => db.close());
 
 describe('against the real SQL Server', () => {
   it('connects over TCP with the configured login', async () => {
+    // CONNECTIONPROPERTY needs no server-level permission, unlike sys.dm_exec_connections.
     const result = await db.run((pool) =>
       pool
         .request()
         .query(
-          'SELECT SUSER_SNAME() AS login, DB_NAME() AS db, net_transport AS transport FROM sys.dm_exec_connections WHERE session_id = @@SPID',
+          "SELECT DB_NAME() AS db, CAST(CONNECTIONPROPERTY('net_transport') AS nvarchar(40)) AS transport",
         ),
     );
-    expect(result.recordset[0]).toMatchObject({ db: config.db.database, transport: 'TCP' });
+    expect(result.recordset[0]).toEqual({ db: config.db.database, transport: 'TCP' });
   });
 
   it('GET /api/health reports the database as up', async () => {

@@ -39,7 +39,16 @@ export function createDatabase({
 }) {
   const loginCooldownMs = (dbConfig.loginCooldownSeconds ?? 300) * 1000;
   let poolPromise = null;
+  let poolCredentialsId = null; // fingerprint of the credentials the open pool uses
   let failedLogin = null; // { fingerprint, until }
+
+  function startCooldown(credentialsId) {
+    failedLogin = { fingerprint: credentialsId, until: now() + loginCooldownMs };
+    logger.warn(
+      { cooldownSeconds: loginCooldownMs / 1000 },
+      'Database login failed; these credentials will not be retried until the cooldown ends',
+    );
+  }
 
   async function openPool() {
     const credentials = await credentialProvider.getCredentials();
@@ -66,16 +75,11 @@ export function createDatabase({
     try {
       await pool.connect();
     } catch (err) {
-      if (isLoginFailure(err)) {
-        failedLogin = { fingerprint: credentialsId, until: now() + loginCooldownMs };
-        logger.warn(
-          { cooldownSeconds: loginCooldownMs / 1000 },
-          'Database login failed; these credentials will not be retried until the cooldown ends',
-        );
-      }
+      if (isLoginFailure(err)) startCooldown(credentialsId);
       throw err;
     }
     failedLogin = null;
+    poolCredentialsId = credentialsId;
     return pool;
   }
 
@@ -92,6 +96,7 @@ export function createDatabase({
   async function close() {
     const current = poolPromise;
     poolPromise = null;
+    poolCredentialsId = null;
     if (!current) return;
     try {
       await (await current).close();
@@ -100,12 +105,17 @@ export function createDatabase({
     }
   }
 
-  /** Runs `operation(pool)`, retrying once with fresh credentials after a login failure. */
+  /**
+   * Runs `operation(pool)`, retrying once with fresh credentials after a login failure.
+   * The credentials that just failed go on cooldown first, so the retry only reaches
+   * SQL Server if the credential source already has different (rotated) credentials.
+   */
   async function run(operation) {
     try {
       return await operation(await getPool());
     } catch (err) {
       if (!isLoginFailure(err)) throw err;
+      if (poolCredentialsId) startCooldown(poolCredentialsId);
       logger.warn('Database login failed; reloading credentials and retrying once');
       await close();
       return operation(await getPool());

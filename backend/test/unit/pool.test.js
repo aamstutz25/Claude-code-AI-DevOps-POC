@@ -144,6 +144,18 @@ describe('login cooldown (lockout protection)', () => {
     expect(pools).toHaveLength(1);
   });
 
+  it('does not reconnect with unchanged credentials after an open pool hits a login failure', async () => {
+    const { pools, client } = fakeSqlClient();
+    const db = makeDb(rotatingProvider('pw-1'), client);
+    await db.run(async () => 'warm up');
+    await expect(
+      db.run(async () => {
+        throw loginError();
+      }),
+    ).rejects.toMatchObject({ code: 'ELOGINCOOLDOWN' });
+    expect(pools).toHaveLength(1);
+  });
+
   it('keeps refusing the same credentials until the cooldown ends', async () => {
     let time = 0;
     const { pools, client } = fakeSqlClient({ failConnectFor: ['wrong'] });

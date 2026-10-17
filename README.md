@@ -116,7 +116,8 @@ getCredentials(): Promise<{ user, password }>
   failures can lock the login. After a failed login the pool will not send those same
   credentials to SQL Server again for `DB_LOGIN_COOLDOWN_SECONDS` (default 300); requests
   fail fast instead. Changed (rotated) credentials are tried immediately, so recovery from a
-  rotation is not delayed. Restarting the app also clears the cooldown.
+  rotation is not delayed, and each rotation costs SQL Server at most one failed login.
+  Restarting the app also clears the cooldown.
 - **To integrate PAM later:** add a provider (for example `pam`) to `credentials.js` that
   fetches the credentials from the PAM solution, and set `DB_CREDENTIAL_PROVIDER=pam`. No
   routes, pool or startup code change. A two-account (zero-downtime) rotation strategy can be
