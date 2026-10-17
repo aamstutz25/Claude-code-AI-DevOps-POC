@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { describeError } from '../logger.js';
 
@@ -6,22 +7,53 @@ export function isLoginFailure(err) {
   return err?.code === 'ELOGIN' || err?.number === 18456 || err?.originalError?.number === 18456;
 }
 
+/** Raised instead of contacting SQL Server while known-bad credentials are cooling down. */
+export class LoginCooldownError extends Error {
+  constructor() {
+    super('Database login recently failed with these credentials; waiting for new credentials');
+    this.name = 'LoginCooldownError';
+    this.code = 'ELOGINCOOLDOWN';
+  }
+}
+
+/** Identifies a set of credentials without keeping another copy of the password. */
+function fingerprint({ user, password }) {
+  return createHash('sha256').update(`${user}\0${password}`).digest('hex');
+}
+
 /**
  * Wraps an mssql connection pool so credentials come from the credential provider and
  * a login failure (for example after a password rotation) is recovered automatically:
  * the pool is closed, credentials are fetched again and the operation is retried once.
+ *
+ * To avoid locking the SQL login out (SQL logins follow the Windows lockout policy), a
+ * login failure puts those exact credentials on a cooldown: until it ends they are not
+ * sent to SQL Server again. Different (rotated) credentials are tried immediately.
  */
-export function createDatabase({ dbConfig, credentialProvider, logger, sqlClient = sql }) {
+export function createDatabase({
+  dbConfig,
+  credentialProvider,
+  logger,
+  sqlClient = sql,
+  now = Date.now,
+}) {
+  const loginCooldownMs = (dbConfig.loginCooldownSeconds ?? 300) * 1000;
   let poolPromise = null;
+  let failedLogin = null; // { fingerprint, until }
 
   async function openPool() {
-    const { user, password } = await credentialProvider.getCredentials();
+    const credentials = await credentialProvider.getCredentials();
+    const credentialsId = fingerprint(credentials);
+    if (failedLogin?.fingerprint === credentialsId && now() < failedLogin.until) {
+      throw new LoginCooldownError();
+    }
+
     const pool = new sqlClient.ConnectionPool({
       server: dbConfig.server,
       port: dbConfig.port,
       database: dbConfig.database,
-      user,
-      password,
+      user: credentials.user,
+      password: credentials.password,
       options: {
         encrypt: dbConfig.encrypt,
         trustServerCertificate: dbConfig.trustServerCertificate,
@@ -31,7 +63,19 @@ export function createDatabase({ dbConfig, credentialProvider, logger, sqlClient
       requestTimeout: 15_000,
     });
     pool.on('error', (err) => logger.error({ err: describeError(err) }, 'Database pool error'));
-    await pool.connect();
+    try {
+      await pool.connect();
+    } catch (err) {
+      if (isLoginFailure(err)) {
+        failedLogin = { fingerprint: credentialsId, until: now() + loginCooldownMs };
+        logger.warn(
+          { cooldownSeconds: loginCooldownMs / 1000 },
+          'Database login failed; these credentials will not be retried until the cooldown ends',
+        );
+      }
+      throw err;
+    }
+    failedLogin = null;
     return pool;
   }
 

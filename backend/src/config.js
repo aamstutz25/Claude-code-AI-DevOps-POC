@@ -24,6 +24,14 @@ function parsePort(value, name) {
   return port;
 }
 
+function parseNonNegativeInteger(value, name) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0) {
+    throw new Error(`${name} must be a whole number of 0 or more`);
+  }
+  return number;
+}
+
 function parseBoolean(value, defaultValue, name) {
   if (value === undefined || value === '') return defaultValue;
   const normalized = value.trim().toLowerCase();
@@ -55,6 +63,12 @@ export function getConfig(env = process.env) {
         'DB_TRUST_SERVER_CERTIFICATE',
       ),
       credentialProvider: env.DB_CREDENTIAL_PROVIDER ?? 'env',
+      // After a failed login, the same credentials are not retried for this long, so a
+      // wrong password cannot lock the SQL login out. Changed credentials are tried at once.
+      loginCooldownSeconds: parseNonNegativeInteger(
+        env.DB_LOGIN_COOLDOWN_SECONDS ?? '300',
+        'DB_LOGIN_COOLDOWN_SECONDS',
+      ),
     },
   };
 }

@@ -47,8 +47,8 @@ function rotatingProvider(...passwords) {
   };
 }
 
-function makeDb(provider, sqlClient) {
-  return createDatabase({ dbConfig, credentialProvider: provider, logger, sqlClient });
+function makeDb(provider, sqlClient, now) {
+  return createDatabase({ dbConfig, credentialProvider: provider, logger, sqlClient, now });
 }
 
 describe('createDatabase', () => {
@@ -121,7 +121,7 @@ describe('createDatabase', () => {
     const { pools, client } = fakeSqlClient({ failConnectFor: ['bad'] });
     const provider = rotatingProvider('bad', 'bad', 'good');
     const db = makeDb(provider, client);
-    await expect(db.run(async () => 'x')).rejects.toMatchObject({ code: 'ELOGIN' });
+    await expect(db.run(async () => 'x')).rejects.toThrow();
     await expect(db.run(async () => 'ok')).resolves.toBe('ok');
     expect(pools.at(-1).config.password).toBe('good');
   });
@@ -133,6 +133,54 @@ describe('createDatabase', () => {
     await db.close();
     await db.close();
     expect(pools[0].closed).toBe(true);
+  });
+});
+
+describe('login cooldown (lockout protection)', () => {
+  it('sends failed credentials to SQL Server only once, not on the automatic retry', async () => {
+    const { pools, client } = fakeSqlClient({ failConnectFor: ['wrong'] });
+    const db = makeDb(rotatingProvider('wrong'), client);
+    await expect(db.run(async () => 'x')).rejects.toMatchObject({ code: 'ELOGINCOOLDOWN' });
+    expect(pools).toHaveLength(1);
+  });
+
+  it('keeps refusing the same credentials until the cooldown ends', async () => {
+    let time = 0;
+    const { pools, client } = fakeSqlClient({ failConnectFor: ['wrong'] });
+    const db = makeDb(rotatingProvider('wrong'), client, () => time);
+    await expect(db.run(async () => 'x')).rejects.toThrow();
+
+    time = 299_000;
+    await expect(db.run(async () => 'x')).rejects.toMatchObject({ code: 'ELOGINCOOLDOWN' });
+    expect(pools).toHaveLength(1);
+
+    time = 300_000;
+    await expect(db.run(async () => 'x')).rejects.toThrow();
+    expect(pools).toHaveLength(2);
+  });
+
+  it('tries changed (rotated) credentials immediately, even during the cooldown', async () => {
+    const { pools, client } = fakeSqlClient({ failConnectFor: ['old'] });
+    const db = makeDb(rotatingProvider('old', 'old', 'new'), client, () => 0);
+    await expect(db.run(async () => 'x')).rejects.toMatchObject({ code: 'ELOGINCOOLDOWN' });
+    await expect(db.run(async () => 'recovered')).resolves.toBe('recovered');
+    expect(pools.at(-1).config.password).toBe('new');
+  });
+
+  it('honours a configured cooldown length', async () => {
+    let time = 0;
+    const { pools, client } = fakeSqlClient({ failConnectFor: ['wrong'] });
+    const db = createDatabase({
+      dbConfig: { ...dbConfig, loginCooldownSeconds: 10 },
+      credentialProvider: rotatingProvider('wrong'),
+      logger,
+      sqlClient: client,
+      now: () => time,
+    });
+    await expect(db.run(async () => 'x')).rejects.toThrow();
+    time = 10_000;
+    await expect(db.run(async () => 'x')).rejects.toThrow();
+    expect(pools).toHaveLength(2);
   });
 });
 

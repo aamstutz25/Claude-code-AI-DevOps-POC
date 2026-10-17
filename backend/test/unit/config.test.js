@@ -13,6 +13,7 @@ describe('getConfig', () => {
       encrypt: true,
       trustServerCertificate: false,
       credentialProvider: 'env',
+      loginCooldownSeconds: 300,
     });
   });
 
@@ -43,6 +44,7 @@ describe('getConfig', () => {
   it.each([
     [{ PORT: 'abc' }, 'PORT must be a port number'],
     [{ DB_PORT: '70000' }, 'DB_PORT must be a port number'],
+    [{ DB_LOGIN_COOLDOWN_SECONDS: '-1' }, 'DB_LOGIN_COOLDOWN_SECONDS must be a whole number'],
     [
       { DB_TRUST_SERVER_CERTIFICATE: 'yes' },
       'DB_TRUST_SERVER_CERTIFICATE must be "true" or "false"',

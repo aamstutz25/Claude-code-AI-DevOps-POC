@@ -45,6 +45,9 @@ npm run dev                 # API on :3000, React on :5173
 
 Open http://localhost:5173: it shows **Hello, World!** and "Database connected".
 
+> In `.env`, wrap the password in single quotes (`DB_PASSWORD='...'`). Unquoted, anything after
+> a `#` is treated as a comment and the password is silently cut short.
+
 ## Scripts
 
 | Command                     | What it does                                                  |
@@ -84,6 +87,7 @@ a pipeline can supply them directly. See `.env.example` for the full list.
 | `DB_TRUST_SERVER_CERTIFICATE` | `false`                 | See below                          |
 | `DB_CREDENTIAL_PROVIDER`      | `env`                   | See below                          |
 | `DB_USER` / `DB_PASSWORD`     | none                    | Read only by the `env` provider    |
+| `DB_LOGIN_COOLDOWN_SECONDS`   | `300`                   | Lockout protection (see below)     |
 
 ### `DB_TRUST_SERVER_CERTIFICATE`
 
@@ -108,6 +112,11 @@ getCredentials(): Promise<{ user, password }>
   opens a pool. If SQL Server rejects the login (error 18456), the pool is closed, credentials
   are fetched again and the operation is retried once. This is what lets an external PAM
   solution rotate the password while the app is running.
+- **Lockout protection:** SQL logins follow the Windows account-lockout policy, so repeated
+  failures can lock the login. After a failed login the pool will not send those same
+  credentials to SQL Server again for `DB_LOGIN_COOLDOWN_SECONDS` (default 300); requests
+  fail fast instead. Changed (rotated) credentials are tried immediately, so recovery from a
+  rotation is not delayed. Restarting the app also clears the cooldown.
 - **To integrate PAM later:** add a provider (for example `pam`) to `credentials.js` that
   fetches the credentials from the PAM solution, and set `DB_CREDENTIAL_PROVIDER=pam`. No
   routes, pool or startup code change. A two-account (zero-downtime) rotation strategy can be
