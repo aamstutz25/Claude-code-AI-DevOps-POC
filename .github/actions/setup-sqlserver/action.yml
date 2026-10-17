@@ -1,0 +1,76 @@
+name: Set up disposable SQL Server
+description: >
+  Starts a throwaway SQL Server 2025 container, creates the application database with
+  separate migration and runtime logins (generated passwords, masked in logs), and writes
+  the job's .env. Nothing is stored as a repository secret.
+
+inputs:
+  image:
+    description: SQL Server container image
+    default: mcr.microsoft.com/mssql/server:2025-latest
+
+runs:
+  using: composite
+  steps:
+    - name: Generate one-time credentials
+      shell: bash
+      run: |
+        # Upper, lower, digit and symbol: meets SQL Server's password policy.
+        generate() { echo "Ci#$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 24)"; }
+        sa_password=$(generate); app_password=$(generate); migrator_password=$(generate)
+        for secret in "$sa_password" "$app_password" "$migrator_password"; do
+          echo "::add-mask::$secret"
+        done
+        {
+          echo "MSSQL_SA_PASSWORD=$sa_password"
+          echo "DB_ADMIN_USER=sa"
+          echo "DB_ADMIN_PASSWORD=$sa_password"
+          echo "DB_NAME=HelloPoc"
+          echo "APP_LOGIN=ci_app"
+          echo "APP_PASSWORD=$app_password"
+          echo "MIGRATOR_LOGIN=ci_migrator"
+          echo "MIGRATOR_PASSWORD=$migrator_password"
+        } >> "$GITHUB_ENV"
+
+    - name: Start SQL Server container
+      shell: bash
+      run: |
+        # The password is passed by name from the environment, never on the command line.
+        docker run -d --name mssql \
+          -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_SA_PASSWORD \
+          -p 1433:1433 "${{ inputs.image }}"
+        for attempt in $(seq 1 60); do
+          if docker logs mssql 2>&1 | grep -q 'SQL Server is now ready for client connections'; then
+            echo "SQL Server is ready"; exit 0
+          fi
+          sleep 2
+        done
+        echo "::error::SQL Server did not start within 120 seconds"
+        docker logs mssql
+        exit 1
+
+    - name: Write job .env
+      shell: bash
+      run: |
+        # DB_TRUST_SERVER_CERTIFICATE=true is accepted ONLY for this disposable CI instance,
+        # which has a self-signed certificate. TEST and PROD validate certificates (false).
+        cat > .env <<EOF
+        PORT=3000
+        LOG_LEVEL=info
+        DB_SERVER=localhost
+        DB_PORT=1433
+        DB_NAME=${DB_NAME}
+        DB_ENCRYPT=true
+        DB_TRUST_SERVER_CERTIFICATE=true
+        DB_CREDENTIAL_PROVIDER=env
+        DB_USER=${APP_LOGIN}
+        DB_PASSWORD='${APP_PASSWORD}'
+        DB_MIGRATION_USER=${MIGRATOR_LOGIN}
+        DB_MIGRATION_PASSWORD='${MIGRATOR_PASSWORD}'
+        EOF
+
+    - name: Create database and logins
+      shell: bash
+      run: |
+        node backend/scripts/run-sql.js database/bootstrap/01_database_and_logins.sql
+        node backend/scripts/run-sql.js database/bootstrap/02_database_access.sql

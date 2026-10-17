@@ -1,6 +1,9 @@
 // Applies numbered SQL scripts from database/migrations in order and records each one in
 // dbo.SchemaVersion, so running it again only applies new scripts (safe for pipelines).
 //
+// Runs as the migration (deployment) identity, DB_MIGRATION_USER, never as the
+// application's runtime login.
+//
 // Usage: npm run db:migrate
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -10,17 +13,10 @@ import sql from 'mssql';
 import { getConfig, loadEnvFile } from '../src/config.js';
 import { createCredentialProvider } from '../src/db/credentials.js';
 import { createDatabase } from '../src/db/pool.js';
+import { splitBatches } from '../src/db/sql-script.js';
 import { createLogger, describeError } from '../src/logger.js';
 
 const migrationsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../database/migrations');
-
-/** Splits a script into batches on lines containing only GO, like sqlcmd and SSMS. */
-export function splitBatches(script) {
-  return script
-    .split(/^\s*GO\s*$/im)
-    .map((batch) => batch.trim())
-    .filter(Boolean);
-}
 
 const ensureVersionTable = `
 IF OBJECT_ID(N'dbo.SchemaVersion', N'U') IS NULL
@@ -72,6 +68,7 @@ async function main() {
   const logger = createLogger({ level: config.logLevel });
   const credentialProvider = createCredentialProvider(config.db.credentialProvider, {
     envFile: config.envFile,
+    purpose: 'migration',
   });
   const db = createDatabase({ dbConfig: config.db, credentialProvider, logger });
   try {

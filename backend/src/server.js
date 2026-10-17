@@ -8,8 +8,10 @@ loadEnvFile();
 const config = getConfig();
 const logger = createLogger({ level: config.logLevel });
 
+// The running app only ever uses the least-privilege runtime identity.
 const credentialProvider = createCredentialProvider(config.db.credentialProvider, {
   envFile: config.envFile,
+  purpose: 'runtime',
 });
 const db = createDatabase({ dbConfig: config.db, credentialProvider, logger });
 const app = createApp({ config, db, logger });
